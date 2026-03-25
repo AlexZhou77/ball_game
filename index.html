@@ -140,8 +140,12 @@
       <p>
         Move with <kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd> · Drag/touch near the bottom
       </p>
+      <p>
+        Rules: red bars give +2 (and speed up the ball), normal bars give +1, blue bars give +0 (and slow the ball).
+      </p>
       <div class="hud">
         <span id="score">Score: 0</span>
+        <span id="highScore">Highest score: 0</span>
       </div>
     </div>
 
@@ -151,13 +155,14 @@
       <div id="startOverlay" class="overlay">
         <h2>Ready?</h2>
         <p>
-          The ball bounces around. Destroy the blocks near the top. If the ball misses the bar: game over.
+          The ball bounces around. Hit red bars for +2, normal bars for +1, and blue bars for +0. If the ball misses the
+          bar: game over.
         </p>
         <button type="button" id="startBtn">Play</button>
       </div>
 
       <div id="gameOverOverlay" class="overlay hidden">
-        <h2>Game over</h2>
+        <h2>Lovel, b</h2>
         <p id="finalScore">Final score: 0</p>
         <button type="button" id="againBtn">Play again</button>
       </div>
@@ -169,6 +174,7 @@
         const ctx = canvas.getContext("2d");
 
         const scoreEl = document.getElementById("score");
+        const highScoreEl = document.getElementById("highScore");
         const startOverlay = document.getElementById("startOverlay");
         const gameOverOverlay = document.getElementById("gameOverOverlay");
         const finalScoreEl = document.getElementById("finalScore");
@@ -196,6 +202,7 @@
           vy: -280,
         };
         const baseBallSpeed = 320; // used for initial normalization
+        const minBallSpeed = 220;
         const maxBallSpeed = 820;
 
         // Obstacles
@@ -204,8 +211,15 @@
         const OB_TOP_MIN = 50;
         const OB_TOP_MAX = 220;
         const OB_MARGIN = 14;
+        const OB_WIDTH_MIN = 42;
+        const OB_WIDTH_MAX = 68;
+        const OB_HEIGHT_MIN = 14;
+        const OB_HEIGHT_MAX = 22;
+        const OB_GAP = 6;
+        const OB_SPAWN_ATTEMPTS = 80;
         const respawnMinMs = 900;
         const respawnMaxMs = 2100;
+        const HIGH_SCORE_STORAGE_KEY = "ballVsBarHighestScore";
 
         // Decorative background
         const stars = [];
@@ -222,6 +236,7 @@
         const particles = [];
 
         let score = 0;
+        let highScore = loadHighScore();
         let running = false;
         let rafId = 0;
         let lastNow = 0;
@@ -236,6 +251,32 @@
 
         function updateHUD() {
           scoreEl.textContent = "Score: " + score;
+          highScoreEl.textContent = "Highest score: " + highScore;
+        }
+
+        function loadHighScore() {
+          const legacyKey = "ballVsBarHighScore";
+          try {
+            const storedValue = localStorage.getItem(HIGH_SCORE_STORAGE_KEY) || localStorage.getItem(legacyKey) || "0";
+            const stored = Number.parseInt(storedValue, 10);
+            return Number.isFinite(stored) && stored > 0 ? stored : 0;
+          } catch {
+            const cookieValue = document.cookie
+              .split("; ")
+              .find((x) => x.startsWith(HIGH_SCORE_STORAGE_KEY + "="))
+              ?.split("=")[1];
+            const stored = Number.parseInt(cookieValue || "0", 10);
+            return Number.isFinite(stored) && stored > 0 ? stored : 0;
+          }
+        }
+
+        function saveHighScore() {
+          try {
+            localStorage.setItem(HIGH_SCORE_STORAGE_KEY, String(highScore));
+          } catch {
+            // Fallback when localStorage write fails.
+            document.cookie = `${HIGH_SCORE_STORAGE_KEY}=${highScore}; max-age=31536000; path=/; SameSite=Lax`;
+          }
         }
 
         function drawBackground() {
@@ -300,29 +341,36 @@
           const isAlive = o.alive;
           if (!isAlive) return;
 
-          // Rock body
           ctx.save();
           const gx = ctx.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
-          gx.addColorStop(0, "rgba(139,115,85,1)");
-          gx.addColorStop(1, "rgba(107,83,68,1)");
+          if (o.kind === "rocket") {
+            gx.addColorStop(0, "rgba(255,120,120,1)");
+            gx.addColorStop(1, "rgba(220,46,46,1)");
+          } else if (o.kind === "bubble") {
+            gx.addColorStop(0, "rgba(123,215,255,1)");
+            gx.addColorStop(1, "rgba(55,113,230,1)");
+          } else {
+            gx.addColorStop(0, "rgba(139,115,85,1)");
+            gx.addColorStop(1, "rgba(107,83,68,1)");
+          }
           ctx.fillStyle = gx;
-          ctx.strokeStyle = "rgba(255,255,255,0.18)";
+          ctx.strokeStyle = "rgba(255,255,255,0.2)";
           ctx.lineWidth = 2;
 
           ctx.beginPath();
-          // Slightly rounded rectangles for "blocks"
           ctx.roundRect(o.x, o.y, o.w, o.h, 6);
           ctx.fill();
           ctx.stroke();
 
-          // Inner crack lines
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
-          ctx.lineWidth = 2;
+          // Keep all obstacle variants as bars with subtle pattern differences.
+          ctx.strokeStyle = "rgba(255,255,255,0.25)";
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.moveTo(o.x + 8, o.y + o.h * 0.35);
-          ctx.lineTo(o.x + o.w - 10, o.y + o.h * 0.15);
-          ctx.moveTo(o.x + 10, o.y + o.h * 0.72);
-          ctx.lineTo(o.x + o.w * 0.55, o.y + 10);
+          const step = 8;
+          for (let x = o.x + 4; x < o.x + o.w; x += step) {
+            ctx.moveTo(x, o.y + 3);
+            ctx.lineTo(Math.min(x + 4, o.x + o.w - 2), o.y + o.h - 3);
+          }
           ctx.stroke();
 
           ctx.restore();
@@ -353,8 +401,10 @@
 
         function clampBallSpeed() {
           const s = Math.hypot(ball.vx, ball.vy);
-          if (s <= maxBallSpeed) return;
-          const k = maxBallSpeed / s;
+          if (s < 0.0001) return;
+          if (s <= maxBallSpeed && s >= minBallSpeed) return;
+          const target = s > maxBallSpeed ? maxBallSpeed : minBallSpeed;
+          const k = target / s;
           ball.vx *= k;
           ball.vy *= k;
         }
@@ -405,11 +455,50 @@
           });
         }
 
+        function isObstacleOverlappingAny(rect, ignoreObstacle) {
+          for (let i = 0; i < obstacles.length; i++) {
+            const other = obstacles[i];
+            if (other === ignoreObstacle || !other.alive) continue;
+            if (
+              rect.x < other.x + other.w + OB_GAP &&
+              rect.x + rect.w + OB_GAP > other.x &&
+              rect.y < other.y + other.h + OB_GAP &&
+              rect.y + rect.h + OB_GAP > other.y
+            ) {
+              return true;
+            }
+          }
+          return false;
+        }
+
         function spawnObstacle(o, forceAlive) {
-          o.w = rand(26, 46);
-          o.h = rand(18, 30);
-          o.x = rand(OB_MARGIN, W - OB_MARGIN - o.w);
-          o.y = rand(OB_TOP_MIN, OB_TOP_MAX);
+          let placed = false;
+          for (let attempt = 0; attempt < OB_SPAWN_ATTEMPTS; attempt++) {
+            const trial = {
+              w: rand(OB_WIDTH_MIN, OB_WIDTH_MAX),
+              h: rand(OB_HEIGHT_MIN, OB_HEIGHT_MAX),
+            };
+            trial.x = rand(OB_MARGIN, W - OB_MARGIN - trial.w);
+            trial.y = rand(OB_TOP_MIN, OB_TOP_MAX);
+            if (!isObstacleOverlappingAny(trial, o)) {
+              o.w = trial.w;
+              o.h = trial.h;
+              o.x = trial.x;
+              o.y = trial.y;
+              placed = true;
+              break;
+            }
+          }
+
+          if (!placed) {
+            o.w = rand(OB_WIDTH_MIN, OB_WIDTH_MAX);
+            o.h = rand(OB_HEIGHT_MIN, OB_HEIGHT_MAX);
+            o.x = rand(OB_MARGIN, W - OB_MARGIN - o.w);
+            o.y = rand(OB_TOP_MIN, OB_TOP_MAX);
+          }
+
+          const t = Math.random();
+          o.kind = t < 0.18 ? "rocket" : t < 0.36 ? "bubble" : "rock";
           o.alive = forceAlive ?? true;
           o.respawnInMs = 0;
         }
@@ -417,7 +506,7 @@
         function initObstacles() {
           obstacles.length = 0;
           for (let i = 0; i < OBSTACLE_COUNT; i++) {
-            const o = { x: 0, y: 0, w: 30, h: 20, alive: true, respawnInMs: 0 };
+            const o = { x: 0, y: 0, w: 30, h: 20, kind: "rock", alive: true, respawnInMs: 0 };
             spawnObstacle(o, true);
             obstacles.push(o);
           }
@@ -437,8 +526,13 @@
         function endGame() {
           running = false;
           cancelAnimationFrame(rafId);
+          if (score > highScore) {
+            highScore = score;
+            saveHighScore();
+          }
+          updateHUD();
           gameOverOverlay.classList.remove("hidden");
-          finalScoreEl.textContent = "Final score: " + score;
+          finalScoreEl.textContent = "Final score: " + score + " | Highest score: " + highScore;
         }
 
         function startGame() {
@@ -465,7 +559,13 @@
           o.alive = false;
           o.respawnInMs = rand(respawnMinMs, respawnMaxMs);
 
-          score += 1;
+          if (o.kind === "rocket") {
+            score += 2;
+          } else if (o.kind === "bubble") {
+            score += 0;
+          } else {
+            score += 1;
+          }
           updateHUD();
 
           // Particle burst
@@ -500,7 +600,17 @@
           }
 
           reflectBallFromNormal(nx, ny);
-          bumpBallSpeed();
+          if (o.kind === "rocket") {
+            ball.vx *= 1.22;
+            ball.vy *= 1.22;
+            clampBallSpeed();
+          } else if (o.kind === "bubble") {
+            ball.vx *= 0.82;
+            ball.vy *= 0.82;
+            clampBallSpeed();
+          } else {
+            bumpBallSpeed();
+          }
         }
 
         function update(dt) {
@@ -655,6 +765,7 @@
         startBtn.addEventListener("click", startGame);
         againBtn.addEventListener("click", startGame);
 
+        updateHUD();
         drawBackground();
         drawPaddle();
         drawBall();
