@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>Ball vs Bar</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Nunito:wght@600;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg-deep: #0f1419;
+        --bg-space: #1a2332;
+        --accent: #57b6ff;
+        --ball: #b6f3ff;
+        --bar: #ff6b4a;
+        --hud: #e8f0fe;
+        --rock: #8b7355;
+        --rock2: #6b5344;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-family: "Nunito", system-ui, sans-serif;
+        background: radial-gradient(ellipse 120% 80% at 50% 0%, var(--bg-space) 0%, var(--bg-deep) 55%);
+        color: var(--hud);
+        padding: 1rem;
+        touch-action: none;
+      }
+
+      h1 {
+        font-family: "Bungee", cursive;
+        font-size: clamp(1.75rem, 5vw, 2.5rem);
+        letter-spacing: 0.04em;
+        margin: 0 0 0.5rem;
+        color: var(--accent);
+        text-shadow: 0 0 24px rgba(87, 182, 255, 0.45);
+      }
+
+      .panel {
+        text-align: center;
+        max-width: 420px;
+        margin-bottom: 0.75rem;
+      }
+
+      .panel p {
+        margin: 0.25rem 0;
+        font-size: 0.95rem;
+        opacity: 0.88;
+      }
+
+      .hud {
+        display: flex;
+        gap: 1.25rem;
+        justify-content: center;
+        font-weight: 800;
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+      }
+
+      .wrap {
+        position: relative;
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 0 0 3px rgba(87, 182, 255, 0.35), 0 20px 50px rgba(0, 0, 0, 0.5);
+      }
+
+      canvas {
+        display: block;
+        width: min(100vw - 2rem, 400px);
+        height: auto;
+        background: linear-gradient(180deg, #1e2a3d 0%, #0d1218 100%);
+        touch-action: none;
+      }
+
+      .overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(10, 14, 20, 0.82);
+        padding: 1.5rem;
+        text-align: center;
+      }
+
+      .overlay h2 {
+        font-family: "Bungee", cursive;
+        color: var(--accent);
+        margin: 0 0 0.5rem;
+        font-size: 1.5rem;
+      }
+
+      .overlay button {
+        font-family: "Nunito", sans-serif;
+        font-weight: 800;
+        font-size: 1.1rem;
+        padding: 0.75rem 1.75rem;
+        margin-top: 1rem;
+        border: none;
+        border-radius: 999px;
+        background: linear-gradient(180deg, var(--accent), #3a7dff);
+        color: #fff;
+        cursor: pointer;
+        box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
+        transition: transform 0.08s ease, box-shadow 0.08s ease;
+      }
+
+      .overlay button:active {
+        transform: translateY(3px);
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+      }
+
+      .overlay.hidden {
+        display: none;
+      }
+
+      kbd {
+        display: inline-block;
+        padding: 0.1em 0.45em;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.12);
+        font-size: 0.85em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h1>Ball vs Bar</h1>
+      <p>
+        Move with <kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd> · Drag/touch near the bottom
+      </p>
+      <div class="hud">
+        <span id="score">Score: 0</span>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <canvas id="game" width="400" height="560" aria-label="Ball vs Bar game"></canvas>
+
+      <div id="startOverlay" class="overlay">
+        <h2>Ready?</h2>
+        <p>
+          The ball bounces around. Destroy the blocks near the top. If the ball misses the bar: game over.
+        </p>
+        <button type="button" id="startBtn">Play</button>
+      </div>
+
+      <div id="gameOverOverlay" class="overlay hidden">
+        <h2>Game over</h2>
+        <p id="finalScore">Final score: 0</p>
+        <button type="button" id="againBtn">Play again</button>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const canvas = document.getElementById("game");
+        const ctx = canvas.getContext("2d");
+
+        const scoreEl = document.getElementById("score");
+        const startOverlay = document.getElementById("startOverlay");
+        const gameOverOverlay = document.getElementById("gameOverOverlay");
+        const finalScoreEl = document.getElementById("finalScore");
+        const startBtn = document.getElementById("startBtn");
+        const againBtn = document.getElementById("againBtn");
+
+        const W = canvas.width;
+        const H = canvas.height;
+
+        // Bar (player)
+        const paddleW = 120;
+        const paddleH = 16;
+        const paddleY = H - 46;
+        const paddleSpeed = 520; // px/s
+        let paddleX = W / 2 - paddleW / 2;
+        let touchTargetX = null;
+        const keys = {};
+
+        // Ball
+        const ball = {
+          x: W / 2,
+          y: H * 0.62,
+          r: 10,
+          vx: 260,
+          vy: -280,
+        };
+        const baseBallSpeed = 320; // used for initial normalization
+        const maxBallSpeed = 820;
+
+        // Obstacles
+        const obstacles = [];
+        const OBSTACLE_COUNT = 10;
+        const OB_TOP_MIN = 50;
+        const OB_TOP_MAX = 220;
+        const OB_MARGIN = 14;
+        const respawnMinMs = 900;
+        const respawnMaxMs = 2100;
+
+        // Decorative background
+        const stars = [];
+        for (let i = 0; i < 48; i++) {
+          stars.push({
+            x: Math.random() * W,
+            y: Math.random() * H * 0.7,
+            r: Math.random() * 1.3 + 0.3,
+            tw: Math.random() * Math.PI * 2,
+          });
+        }
+
+        // Simple particles when obstacles break
+        const particles = [];
+
+        let score = 0;
+        let running = false;
+        let rafId = 0;
+        let lastNow = 0;
+
+        function rand(min, max) {
+          return min + Math.random() * (max - min);
+        }
+
+        function clamp(v, lo, hi) {
+          return Math.max(lo, Math.min(hi, v));
+        }
+
+        function updateHUD() {
+          scoreEl.textContent = "Score: " + score;
+        }
+
+        function drawBackground() {
+          ctx.fillStyle = "#0d1218";
+          ctx.fillRect(0, 0, W, H);
+
+          // Stars
+          stars.forEach((s) => {
+            s.tw += 0.02;
+            const a = 0.25 + Math.sin(s.tw) * 0.25;
+            ctx.fillStyle = `rgba(232, 240, 254, ${a})`;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+            ctx.fill();
+          });
+
+          // Subtle vignette
+          const g = ctx.createRadialGradient(W / 2, H * 0.3, 20, W / 2, H * 0.3, H * 0.9);
+          g.addColorStop(0, "rgba(255,255,255,0.02)");
+          g.addColorStop(1, "rgba(0,0,0,0.35)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        function drawPaddle() {
+          const gx = ctx.createLinearGradient(paddleX, paddleY, paddleX, paddleY + paddleH);
+          gx.addColorStop(0, "#ff8a6a");
+          gx.addColorStop(1, "#e85a3a");
+          ctx.fillStyle = gx;
+          ctx.beginPath();
+          ctx.roundRect(paddleX, paddleY, paddleW, paddleH, 8);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.35)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Top highlight
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(paddleX + 10, paddleY + 4);
+          ctx.lineTo(paddleX + paddleW - 10, paddleY + 4);
+          ctx.stroke();
+        }
+
+        function drawBall() {
+          const gx = ctx.createRadialGradient(ball.x - ball.r * 0.35, ball.y - ball.r * 0.35, 2, ball.x, ball.y, ball.r * 1.35);
+          gx.addColorStop(0, "#ffffff");
+          gx.addColorStop(0.2, "rgba(182,243,255,1)");
+          gx.addColorStop(1, "rgba(87,182,255,0.15)");
+          ctx.fillStyle = gx;
+          ctx.beginPath();
+          ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = "rgba(255,255,255,0.35)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        function drawObstacle(o) {
+          const isAlive = o.alive;
+          if (!isAlive) return;
+
+          // Rock body
+          ctx.save();
+          const gx = ctx.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+          gx.addColorStop(0, "rgba(139,115,85,1)");
+          gx.addColorStop(1, "rgba(107,83,68,1)");
+          ctx.fillStyle = gx;
+          ctx.strokeStyle = "rgba(255,255,255,0.18)";
+          ctx.lineWidth = 2;
+
+          ctx.beginPath();
+          // Slightly rounded rectangles for "blocks"
+          ctx.roundRect(o.x, o.y, o.w, o.h, 6);
+          ctx.fill();
+          ctx.stroke();
+
+          // Inner crack lines
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(o.x + 8, o.y + o.h * 0.35);
+          ctx.lineTo(o.x + o.w - 10, o.y + o.h * 0.15);
+          ctx.moveTo(o.x + 10, o.y + o.h * 0.72);
+          ctx.lineTo(o.x + o.w * 0.55, o.y + 10);
+          ctx.stroke();
+
+          ctx.restore();
+        }
+
+        function circleRectCollision(circle, rect) {
+          const closestX = clamp(circle.x, rect.x, rect.x + rect.w);
+          const closestY = clamp(circle.y, rect.y, rect.y + rect.h);
+          const dx = circle.x - closestX;
+          const dy = circle.y - closestY;
+          const distSq = dx * dx + dy * dy;
+          return {
+            hit: distSq <= circle.r * circle.r,
+            dx,
+            dy,
+            distSq,
+            closestX,
+            closestY,
+          };
+        }
+
+        function reflectBallFromNormal(nx, ny) {
+          // Normal should be unit length
+          const dot = ball.vx * nx + ball.vy * ny;
+          ball.vx = ball.vx - 2 * dot * nx;
+          ball.vy = ball.vy - 2 * dot * ny;
+        }
+
+        function clampBallSpeed() {
+          const s = Math.hypot(ball.vx, ball.vy);
+          if (s <= maxBallSpeed) return;
+          const k = maxBallSpeed / s;
+          ball.vx *= k;
+          ball.vy *= k;
+        }
+
+        function bumpBallSpeed() {
+          // Small escalation when you destroy a block
+          ball.vx *= 1.06;
+          ball.vy *= 1.06;
+          clampBallSpeed();
+        }
+
+        function spawnParticles(x, y) {
+          const count = 14;
+          for (let i = 0; i < count; i++) {
+            const a = rand(0, Math.PI * 2);
+            const sp = rand(80, 260);
+            particles.push({
+              x,
+              y,
+              vx: Math.cos(a) * sp,
+              vy: Math.sin(a) * sp,
+              r: rand(1.2, 2.6),
+              life: rand(450, 900), // ms
+              age: 0,
+            });
+          }
+        }
+
+        function updateParticles(dtMs) {
+          for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            p.age += dtMs;
+            p.x += p.vx * (dtMs / 1000);
+            p.y += p.vy * (dtMs / 1000);
+            p.vx *= 0.985;
+            p.vy *= 0.985;
+            if (p.age >= p.life) particles.splice(i, 1);
+          }
+        }
+
+        function drawParticles() {
+          particles.forEach((p) => {
+            const t = 1 - p.age / p.life;
+            ctx.fillStyle = `rgba(182,243,255,${t * 0.9})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        }
+
+        function spawnObstacle(o, forceAlive) {
+          o.w = rand(26, 46);
+          o.h = rand(18, 30);
+          o.x = rand(OB_MARGIN, W - OB_MARGIN - o.w);
+          o.y = rand(OB_TOP_MIN, OB_TOP_MAX);
+          o.alive = forceAlive ?? true;
+          o.respawnInMs = 0;
+        }
+
+        function initObstacles() {
+          obstacles.length = 0;
+          for (let i = 0; i < OBSTACLE_COUNT; i++) {
+            const o = { x: 0, y: 0, w: 30, h: 20, alive: true, respawnInMs: 0 };
+            spawnObstacle(o, true);
+            obstacles.push(o);
+          }
+        }
+
+        function resetBall() {
+          ball.x = W / 2;
+          ball.y = H * 0.62;
+
+          // Randomize initial direction, but keep it mostly upward
+          const sx = Math.random() < 0.5 ? -1 : 1;
+          ball.vx = sx * baseBallSpeed * rand(0.45, 0.65);
+          ball.vy = -baseBallSpeed * rand(0.55, 0.78);
+          clampBallSpeed();
+        }
+
+        function endGame() {
+          running = false;
+          cancelAnimationFrame(rafId);
+          gameOverOverlay.classList.remove("hidden");
+          finalScoreEl.textContent = "Final score: " + score;
+        }
+
+        function startGame() {
+          score = 0;
+          updateHUD();
+          paddleX = W / 2 - paddleW / 2;
+          touchTargetX = null;
+
+          particles.length = 0;
+          initObstacles();
+          resetBall();
+
+          running = true;
+          gameOverOverlay.classList.add("hidden");
+          startOverlay.classList.add("hidden");
+
+          lastNow = performance.now();
+          cancelAnimationFrame(rafId);
+          rafId = requestAnimationFrame(loop);
+        }
+
+        function killObstacleAndBounce(o, collision) {
+          // Mark dead + schedule respawn
+          o.alive = false;
+          o.respawnInMs = rand(respawnMinMs, respawnMaxMs);
+
+          score += 1;
+          updateHUD();
+
+          // Particle burst
+          spawnParticles(o.x + o.w / 2, o.y + o.h / 2);
+
+          // Compute collision normal from circle to closest point
+          const dist = Math.sqrt(Math.max(0, collision.distSq));
+          let nx = 0;
+          let ny = 0;
+          if (dist > 0.0001) {
+            nx = collision.dx / dist;
+            ny = collision.dy / dist;
+          } else {
+            // Ball center is effectively on/inside the closest point.
+            // Choose a normal using which axis is "farther" from the rect center.
+            const rcx = o.x + o.w / 2;
+            const rcy = o.y + o.h / 2;
+            if (Math.abs(ball.x - rcx) > Math.abs(ball.y - rcy)) {
+              nx = ball.x < rcx ? -1 : 1;
+              ny = 0;
+            } else {
+              nx = 0;
+              ny = ball.y < rcy ? -1 : 1;
+            }
+          }
+
+          // Positional correction to avoid repeated overlap
+          const penetration = ball.r - dist;
+          if (penetration > 0) {
+            ball.x += nx * (penetration + 0.6);
+            ball.y += ny * (penetration + 0.6);
+          }
+
+          reflectBallFromNormal(nx, ny);
+          bumpBallSpeed();
+        }
+
+        function update(dt) {
+          // Paddle movement
+          let moved = 0;
+          if (keys["ArrowLeft"] || keys["a"] || keys["A"]) moved -= 1;
+          if (keys["ArrowRight"] || keys["d"] || keys["D"]) moved += 1;
+          if (moved !== 0) {
+            paddleX += moved * paddleSpeed * dt;
+          }
+          if (touchTargetX != null) {
+            const paddleCenterX = paddleX + paddleW / 2;
+            const dx = touchTargetX - paddleCenterX;
+            paddleX += Math.sign(dx) * Math.min(Math.abs(dx), paddleSpeed * dt);
+          }
+          paddleX = clamp(paddleX, 10, W - paddleW - 10);
+
+          // Update obstacles (respawn timers)
+          for (let i = 0; i < obstacles.length; i++) {
+            const o = obstacles[i];
+            if (!o.alive) {
+              o.respawnInMs -= dt * 1000;
+              if (o.respawnInMs <= 0) {
+                spawnObstacle(o, true);
+              }
+            }
+          }
+
+          // Move ball
+          ball.x += ball.vx * dt;
+          ball.y += ball.vy * dt;
+
+          // Wall bounces
+          if (ball.x - ball.r < 0) {
+            ball.x = ball.r;
+            ball.vx = Math.abs(ball.vx);
+          } else if (ball.x + ball.r > W) {
+            ball.x = W - ball.r;
+            ball.vx = -Math.abs(ball.vx);
+          }
+
+          if (ball.y - ball.r < 0) {
+            ball.y = ball.r;
+            ball.vy = Math.abs(ball.vy);
+          }
+
+          // Lose if the ball falls past the bar
+          const paddleRect = { x: paddleX, y: paddleY, w: paddleW, h: paddleH };
+          if (ball.y - ball.r > H) {
+            endGame();
+            return;
+          }
+
+          // Bounce off paddle (player keeps the ball alive)
+          const cHitPaddle = circleRectCollision(ball, paddleRect);
+          if (cHitPaddle.hit && ball.vy > 0) {
+            const paddleCenterX = paddleX + paddleW / 2;
+            const offset = clamp((ball.x - paddleCenterX) / (paddleW / 2), -1, 1);
+
+            // Snap the ball above the paddle to avoid repeated overlaps
+            ball.y = paddleY - ball.r - 0.5;
+            ball.vy = -Math.abs(ball.vy);
+
+            // Add a bit of horizontal steering based on where it hit the bar
+            ball.vx += offset * 260;
+            clampBallSpeed();
+          }
+
+          // Obstacles collision: destroy and bounce
+          for (let i = 0; i < obstacles.length; i++) {
+            const o = obstacles[i];
+            if (!o.alive) continue;
+
+            const c = circleRectCollision(ball, o);
+            if (c.hit) {
+              killObstacleAndBounce(o, c);
+              break; // avoid multiple bounces in one frame
+            }
+          }
+        }
+
+        function render() {
+          drawBackground();
+
+          // Obstacles first
+          obstacles.forEach(drawObstacle);
+
+          // Particles
+          drawParticles();
+
+          // Then bar and ball
+          drawPaddle();
+          drawBall();
+        }
+
+        function loop(now) {
+          if (!running) return;
+          const dt = Math.min(0.033, (now - lastNow) / 1000);
+          const dtMs = dt * 1000;
+          lastNow = now;
+
+          update(dt);
+          if (!running) return;
+          updateParticles(dtMs);
+          render();
+          rafId = requestAnimationFrame(loop);
+        }
+
+        window.addEventListener("keydown", (e) => {
+          keys[e.key] = true;
+          if (["ArrowLeft", "ArrowRight", " ", "ArrowUp", "ArrowDown"].includes(e.key)) e.preventDefault();
+        });
+        window.addEventListener("keyup", (e) => {
+          keys[e.key] = false;
+        });
+
+        function canvasToGameX(clientX) {
+          const rect = canvas.getBoundingClientRect();
+          const scale = W / rect.width;
+          return (clientX - rect.left) * scale;
+        }
+
+        canvas.addEventListener(
+          "pointerdown",
+          (e) => {
+            canvas.setPointerCapture(e.pointerId);
+            touchTargetX = canvasToGameX(e.clientX);
+          },
+          { passive: true }
+        );
+        canvas.addEventListener(
+          "pointermove",
+          (e) => {
+            if (canvas.hasPointerCapture(e.pointerId)) {
+              touchTargetX = canvasToGameX(e.clientX);
+            }
+          },
+          { passive: true }
+        );
+        canvas.addEventListener(
+          "pointerup",
+          (e) => {
+            canvas.releasePointerCapture(e.pointerId);
+            touchTargetX = null;
+          },
+          { passive: true }
+        );
+        canvas.addEventListener("pointercancel", () => {
+          touchTargetX = null;
+        });
+
+        startBtn.addEventListener("click", startGame);
+        againBtn.addEventListener("click", startGame);
+
+        drawBackground();
+        drawPaddle();
+        drawBall();
+      })();
+    </script>
+  </body>
+</html>
+
